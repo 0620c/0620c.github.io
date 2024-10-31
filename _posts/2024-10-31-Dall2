@@ -1,0 +1,96 @@
+---
+layout: post
+title: CLIP 기반 대조적 모델을 활용한 이미지 생성 연구 리뷰
+subtitle: 의미와 스타일을 모두 포착하는 강력한 이미지 표현
+tags: [AI, 이미지 생성, CLIP, 딥러닝]
+comments: true
+author: 차승엽
+mathjax: true
+---
+
+## Abstract
+
+CLIP같은 대조적 모델은 의미와 스타일을 모두 포착하는 강력한 이미지 표현을 학습합니다. 이를 이미지 생성에 사용하기 위해 두 가지 접근 방식을 제안합니다:
+
+1. **Prior** : 주어진 텍스트 캡션에서 CLIP 이미지 임베딩을 생성
+2. **Decoder** : 이미지 임베딩을 바탕으로 조건화된 이미지 생성
+
+이 접근법은 다음과 같은 효과를 보입니다:
+- **포토리얼리즘과 캡션 유사성 향상**: 텍스트와 높은 유사성을 가지며 실사에 가까운 이미지를 생성
+- **이미지 다양성 개선**: 더욱 다양한 이미지 생성 가능
+- **의미와 스타일 유지**: 디코더가 조건화되어 비필수적인 세부사항만 변경하면서도 의미와 스타일을 유지하는 이미지 생성
+
+또한, CLIP의 공동 임베딩 공간을 통해 **제로샷 방식으로 언어 기반 이미지 조작**이 가능합니다. 디코더로는 디퓨전 모델을 사용하여 기존 자동회귀 모델보다 성능이 크게 향상되었습니다.
+
+**제로샷**이란 추가 학습 없이도 새로운 작업이나 클래스에 대해 예측이나 분류를 수행할 수 있는 모델의 능력을 의미합니다.
+
+## Introduction
+
+CLIP은 최근 이미지에 대한 성공적인 표현 학습기로 등장했다 이미지 분포에 rubust하고 zero-shot기능이 탁월하다 동시에 diffusion또한 최근 이미지 비디오 생성에서 sota를 달성중이다 샘플 다양성을 희생하고 현실성을 택한 덕분이다
+CLIP의 가장 중요한 이점은 text의 의미를 수정함으로써 이미지를 수정할 수 있다는것이다 GAN에서 이런 작업을 하는것이 비효율적이다 또한 이미지의 어떤 특징을 인식하거나 무시하는지 관찰도 가능하다
+CLIP의 디코더 + 사전 모델을 사용하여 다양한 이미지 생성이 가능해졌다. 그리고 latent space에서 diffusion 을 사전훈련하는법도 개발하여 기존보다 효율적인 계산이 가능해졌다 즉 기존 img2text만 가능하던 CLIP을 반대로 사용한것이다
+
+## METHOD
+
+Training set은 (x,y) x: img y: text로 구성되고 zi,zt는 x가 주어졌을때의 clip image and text emddings이다 이를 통해 두가지 컴포넌트를 이용해 text2img 생성 스택을 디자인한다
+
+- **Prior 모델** \\( P(z_i | y) \\): 캡션 \\( y \\)에 조건화된 CLIP 이미지 임베딩 \\( z_i \\)를 생성하는 모델입니다.
+- **Decoder 모델** \\( P(x | z_i, y) \\): CLIP 이미지 임베딩 \\( z_i \\)와 선택적으로 캡션 \\( y \\)에 조건화된 이미지를 생성하는 모델입니다.
+
+CLIP 의 디코더는 zi까지 학습할 수 있게 해준다 이를 통해 아래의 식을 계산한다
+
+\\( P(x|y) = P(x, z_i | y) = P(x | z_i, y) P(z_i | y) \\)
+
+**Decoder**
+
+Diffusion model을 사용하고 prior로 만든 CLIP img embedding을 조건으로 받아서 img를 생성
+
+GLIDE모델의 아키텍처를 조금 수정해서 사용한다 구체적으론 CLIP embedding을 존재하는 time step embedding에 추가한다 그리고 CLIP embedding을 4개의 추가 tokens로 projecting한뒤 이를 GLIDE text encoder의 출력 시퀀스에 합친다
+Classifier-free guidance라는 기법을 사용하는데 이는 classifier를 사용하지 않고 조건부 정보를 조정하여 이미지 생성 품질을 높이는 기법이다 예를들어 10퍼센트의 CLIP인베딩을 0으로 만들어버린다던가 text caption 50프로를 없애는식으로 학습시키는 것이다 rubust하게 이미지를 생성할 수 있다
+
+2가지 upsampling과정을 실시하는데 64*64 - 256*256 그리고 256*256 - 1024*1024로 upsampling시키는 과정이다 rubust를 위해 여러가지 손상을 입히기도한다 (첫번째에는 가우시안 블러, 두번째는 bsr 열화방식) 이를 ADMNET이라고 한다
+
+**Prior**
+
+Decoder는 CLIP이미지 임베딩 zi를 반전하여 이미지 x를 생성할 수있지만 텍스트 캡션에서 이미지 생성을 가능하게 하려면 y에서 zi를 생성하는 사전모델도 필요하다
+
+**Autoregressive prior**
+
+CLIP 이미지 임베딩을 이산코드 시퀀스로변화하고 text caption을 조건으로 하나씩 순차적으로 예측하는 방식
+
+AR을 효율적으로 수행하는 과정중엔 
+
+SAM기법을 사용해 CLIP 표현공간의 순위를 낮춘대신 평가지표를 향상
+1024개에서 319개로 pca를 사용해 주성분을 유지해도 대부분의 정보 유지가능
+줄인 319개의 차원의 값들을 1024개의 이산 버킷으로 양자화
+Transformer의 causal attention mask로 학습시킴
+
+위의 과정들을 통해 예측해야하는 토큰 수를 3배 감소시킬 수 있다
+
+**Diffusion prior** 
+
+Continuous vector zi를 캡션 y가 조건을 주어진 가우시안 디퓨전 모델을 통해 재구성 트렌스포머의 디코더만을 사용
+
+the encoded text, the CLIP text embedding, an embedding for the diffusion timestep, the noised CLIP image embedding, and a final embedding
+이 순서로 train시킴
+
+샘플링때 두 zi를 생성하고 이중 zt와의 내적값이 높은 샘플을 택함 로스는 아래와 같음
+\\( L_{\text{prior}} = \mathbb{E}_{t \sim [1, T], z_i^{(t)} \sim q_t} \left[ \left\| f_{\theta}(z_i^{(t)}, t, y) - z_i \right\|^2 \right] \\)
+
+## Image Manipulations
+
+본 paper의 접근방식은 (zi,xT)의 bipartite latent representation 로 이미지 x를 인코딩 할 수 있게 해줌 zi는 CLIP에서 인식하는 이미지 측면 설명으로 CLIP의 이미지 인코더로 인코딩 , xT는 이미지로 돌아가기 위한 잔여 정보들로 DDIM Inversion을 통해 얻을 수 있다 이는 zi를 condition으로 이미지를 재구성하는 정보들을 담고있다
+
+본 paper는 이 bipartite latent representation를 이용하여 세가지 이미지 변형 유형을 설명한다
+
+**Variations**
+
+이미지 x를 통해 필수적인 내용은 같지만 모양과 방향성이 다른 측면의 이미지들을 생성해낼 수 있다 이를 위해 η > 0인 DDIM을 사용한다  η = 0이면 결정론적으로 되기 때문이다 η값이 증가할 수록 모양과 방향성 측면에서 무작위성이 증가한다
+
+**Interpolations**
+
+x1과 x2를 섞는것도 가능하다 두 임베딩 zi1, zi2를 오가며 이미지를 섞는다 이를 위해 구면 보간(spherical interpolation)을 사용하여 xTθ = slerp(xT1 , xT2 , θ)) 를 얻어낸다 여기서 세타는 zi1 zi2사이를 회전하는 각도이다
+
+**Text Diffs**
+
+CLIP을 사용하는 가장 큰 장점은 img와 text를 같은 latent space에 임베딩한다는 것이다 이를 통해 language-guided image manipulations (i.e., text diffs)가 가능해지는데  새로은 텍스트가 주어졌을때 이미지를 수정하는 기술이다 기존 (x0, zi0)가 있을때 zi1가 들어왔을때 zd = norm(zt − zt0 )를 계산하여  slerp(zi ,zd ,θ)를 계산해가며 수정한다
